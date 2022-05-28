@@ -280,7 +280,7 @@ public class AutoPrograms {
                 trajectoryCmd("3Ballv2_ii"),
                 new CmdExtendIntakeAndRun()
             ),
-
+            //Limelight does not turn on
             new ParallelCommandGroup(
                 turnRightToAligned(),
                 shootCmd()
@@ -475,7 +475,7 @@ public class AutoPrograms {
             new InstantCommand(() -> limelights.turnShooterLEDOn()),
             new ParallelCommandGroup(
                 new CmdHopperShooting(shooter::isReady),
-                new CmdShootDist()
+                new CmdShootDist(drive::calculateDistance)
             ).withTimeout(2)
         );
     }
@@ -504,7 +504,7 @@ public class AutoPrograms {
             new ParallelCommandGroup(
                 new CmdAlign(),
                 new CmdHopperShooting(shooter::isReady),
-                new CmdShootDist()
+                new CmdShootDist(drive::calculateDistance)
             ).withTimeout(2),
             new InstantCommand(() -> limelights.turnShooterLEDOff())
         );

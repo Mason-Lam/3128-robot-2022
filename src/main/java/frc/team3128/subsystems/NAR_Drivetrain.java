@@ -1,18 +1,20 @@
 package frc.team3128.subsystems;
 
-import com.ctre.phoenix.motorcontrol.NeutralMode;
 import com.ctre.phoenix.motorcontrol.StatusFrameEnhanced;
 import com.kauailabs.navx.frc.AHRS;
 
 import edu.wpi.first.hal.SimDouble;
 import edu.wpi.first.hal.simulation.SimDeviceDataJNI;
+import edu.wpi.first.math.MathUtil;
+import edu.wpi.first.math.estimator.DifferentialDrivePoseEstimator;
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
-import edu.wpi.first.math.kinematics.DifferentialDriveOdometry;
+import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.math.kinematics.DifferentialDriveWheelSpeeds;
 import edu.wpi.first.wpilibj.RobotBase;
 import edu.wpi.first.wpilibj.RobotController;
 import edu.wpi.first.wpilibj.SPI;
+import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.drive.DifferentialDrive;
 import edu.wpi.first.wpilibj.motorcontrol.MotorControllerGroup;
 import edu.wpi.first.wpilibj.simulation.DifferentialDrivetrainSim;
@@ -20,6 +22,11 @@ import edu.wpi.first.wpilibj.smartdashboard.Field2d;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import static frc.team3128.Constants.DriveConstants.*;
+import static frc.team3128.Constants.FieldConstants.HUB_POSITION;
+
+import static frc.team3128.Constants.FieldConstants.*;
+
+import frc.team3128.Constants.VisionConstants;
 import frc.team3128.common.hardware.motorcontroller.NAR_TalonFX;
 import frc.team3128.common.infrastructure.NAR_EMotor;
 
@@ -36,7 +43,9 @@ public class NAR_Drivetrain extends SubsystemBase {
 
     private DifferentialDrive robotDrive;
     private DifferentialDrivetrainSim robotDriveSim;
-    private DifferentialDriveOdometry odometry;
+    private DifferentialDrivePoseEstimator odometry;
+
+    private LimelightSubsystem shooterLimelight;
 
     private static AHRS gyro = new AHRS(SPI.Port.kMXP);;
 
@@ -85,9 +94,9 @@ public class NAR_Drivetrain extends SubsystemBase {
                 null/*VecBuilder.fill(0, 0, 0.0001, 0.1, 0.1, 0.005, 0.005)*/);
         }
 
-        odometry = new DifferentialDriveOdometry(Rotation2d.fromDegrees(getHeading()));
+        odometry = new DifferentialDrivePoseEstimator(Rotation2d.fromDegrees(getHeading()), new Pose2d(), DT_STATE_STD, DT_LOCAL_MEASUREMENT_STD, DT_VISION_MEASUREMENT_STD);
         field = new Field2d();
-
+        shooterLimelight = LimelightSubsystem.getInstance();
         resetEncoders();
     }
 
@@ -100,7 +109,7 @@ public class NAR_Drivetrain extends SubsystemBase {
 
     @Override
     public void periodic() {
-        odometry.update(Rotation2d.fromDegrees(getHeading()), getLeftEncoderDistance(), getRightEncoderDistance());
+        odometry.update(Rotation2d.fromDegrees(getHeading()), getWheelSpeeds(), getLeftEncoderDistance(), getRightEncoderDistance());
         field.setRobotPose(getPose());   
         
         // SmartDashboard.putNumber("Left Encoder (meters)", getLeftEncoderDistance());
@@ -111,6 +120,7 @@ public class NAR_Drivetrain extends SubsystemBase {
         // SmartDashboard.putNumber("Gyro", getHeading());
 
         SmartDashboard.putData("Field", field);
+        addVisionMeasurement();
     }
 
     public void simulationPeriodic() {
@@ -138,8 +148,8 @@ public class NAR_Drivetrain extends SubsystemBase {
         angle.set(robotDriveSim.getHeading().getDegrees()); // @Nathan: I tested this out, this seems to work. This preserves parity w/ the real robot in angle, odometry
         SmartDashboard.putNumber("Sim Gyro", angle.get());
     }
-        
-    public double getHeading() {
+
+    public double getHeading(){
         //gyro.getYaw uses CW as positive
         return -gyro.getYaw(); // (Math.IEEEremainder(gyro.getAngle(), 360) + 360) % 360;
     }
@@ -153,7 +163,7 @@ public class NAR_Drivetrain extends SubsystemBase {
     }
 
     public Pose2d getPose() {
-        return odometry.getPoseMeters();
+        return odometry.getEstimatedPosition();
     }
 
     public double getLeftEncoderDistance() {
@@ -249,6 +259,35 @@ public class NAR_Drivetrain extends SubsystemBase {
     public void resetGyro() {
         gyro.reset();
     }
+    
+    public double calculateDegreesToTurn(){
+        double alpha = getPose().getRotation().getDegrees();
+        return MathUtil.inputModulus(calculateDesiredAngle() - alpha,-180,180);
+    }
 
+    public double calculateDesiredAngle(){
+        Pose2d location = getPose().relativeTo(HUB_POSITION);
+        double theta = Math.toDegrees(Math.atan2(location.getY(),location.getX()));
+        return MathUtil.inputModulus(theta - 180,-180,180);
+    }
+
+    public double calculateDistance(){
+        return getPose().getTranslation().getDistance(HUB_POSITION.getTranslation());
+    }
+
+    private void addVisionMeasurement(){
+        if(!shooterLimelight.getShooterLimelight().hasValidTarget()){
+            return;
+        }
+        Pose2d visionEstimate = shooterLimelight.visionEstimatedPose(getHeading());
+        if (visionEstimate.getTranslation().getDistance(getPose().getTranslation()) > 1.0 || translationOutOfBounds(visionEstimate.getTranslation())) {
+            return;
+        }
+        odometry.addVisionMeasurement(visionEstimate, Timer.getFPGATimestamp() - VisionConstants.LIMELIGHT_LATENCY);
+    }
+
+    private boolean translationOutOfBounds(Translation2d translation) {
+        return translation.getX() > FIELD_X_LENGTH || translation.getX() < 0 || translation.getY() > FIELD_Y_LENGTH || translation.getY() < 0;
+    }
 }
 

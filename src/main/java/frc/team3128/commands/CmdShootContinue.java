@@ -10,27 +10,24 @@ import frc.team3128.common.utility.Log;
 import frc.team3128.subsystems.Hood;
 import frc.team3128.subsystems.Shooter;
 
-public class CmdShootDist extends CommandBase {
+public class CmdShootContinue extends CommandBase {
     private Shooter shooter;
     //private LimelightSubsystem limelights;
     private Hood hood;
     private DoubleSupplier dist;
-    public CmdShootDist(DoubleSupplier dist) {
-        shooter = Shooter.getInstance();
+    public CmdShootContinue(Shooter shooter, Hood hood, DoubleSupplier dist) {
+        this.shooter = shooter;
         //this.limelights = limelights;
-        hood = Hood.getInstance();
+        this.hood = hood;
         this.dist = dist;
         addRequirements(shooter, hood);
     }
 
     @Override
-    public void initialize() {
-        //limelights.turnShooterLEDOn();
-    }
+    public void initialize() {}
     
     @Override
     public void execute() {
-        //double dist = limelights.calculateDistance("shooter");
         double distance = Units.metersToInches(dist.getAsDouble()) - Units.metersToInches(HUB_RADIUS);
         shooter.beginShoot(shooter.calculateMotorVelocityFromDist(distance));
         hood.startPID(hood.calculateAngleFromDistance(distance));
@@ -38,8 +35,6 @@ public class CmdShootDist extends CommandBase {
     
     @Override
     public void end(boolean interrupted) {
-        shooter.stopShoot();
-        //limelights.turnShooterLEDOff();
         Log.info("CmdShootDist", "Cancelling shooting");
     }
     

@@ -1,5 +1,7 @@
 package frc.team3128;
 
+import edu.wpi.first.math.geometry.Pose2d;
+import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.util.Units;
 import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.RobotBase;
@@ -12,12 +14,12 @@ import edu.wpi.first.wpilibj2.command.InstantCommand;
 import edu.wpi.first.wpilibj2.command.PIDSubsystem;
 import edu.wpi.first.wpilibj2.command.ParallelCommandGroup;
 import edu.wpi.first.wpilibj2.command.ParallelDeadlineGroup;
-import edu.wpi.first.wpilibj2.command.RamseteCommand;
 import edu.wpi.first.wpilibj2.command.RunCommand;
 import edu.wpi.first.wpilibj2.command.SequentialCommandGroup;
 import static frc.team3128.Constants.HoodConstants.*;
 import static frc.team3128.Constants.ClimberConstants.*;
 
+import static frc.team3128.Constants.FieldConstants.*;
 import frc.team3128.autonomous.AutoPrograms;
 import frc.team3128.commands.CmdAlign;
 import frc.team3128.commands.CmdArcadeDrive;
@@ -26,10 +28,12 @@ import frc.team3128.commands.CmdClimbTraversalGyro;
 import frc.team3128.commands.CmdExtendIntake;
 import frc.team3128.commands.CmdExtendIntakeAndRun;
 import frc.team3128.commands.CmdHopperShooting;
+import frc.team3128.commands.CmdInPlaceTurnOdom;
 import frc.team3128.commands.CmdIntakeCargo;
 import frc.team3128.commands.CmdOuttake;
 import frc.team3128.commands.CmdRetractHopper;
 import frc.team3128.commands.CmdShootDist;
+import frc.team3128.commands.CmdShootContinue;
 import frc.team3128.commands.CmdShootRPM;
 import frc.team3128.common.hardware.input.NAR_Joystick;
 import frc.team3128.common.hardware.limelight.LEDMode;
@@ -109,12 +113,21 @@ public class RobotContainer {
                         new InstantCommand(() -> m_ll.turnShooterLEDOn()),
                         new CmdRetractHopper().withTimeout(0.5), 
                         new InstantCommand(() -> m_shooter.setState(ShooterState.UPPERHUB)),
-                        // new CmdExtendIntake(),
+                        new ParallelDeadlineGroup(
+                            new SequentialCommandGroup(
+                                new CmdInPlaceTurnOdom(m_drive,m_ll),
+                                new CmdAlign()
+                            ),
+                            new CmdShootContinue(m_shooter, m_hood, m_drive::calculateDistance)
+                        ),
+                        // new CmdExtendIntake(m_intake),
+                        // new InstantCommand(m_ll::turnShooterLEDOn),
                         new ParallelCommandGroup(
+                            // new CmdVisionPoseEstimation(m_drive, m_ll),
                             // new RunCommand(m_intake::runIntake, m_intake),
-                            new CmdAlign(), 
+                            // new CmdAlign(m_drive, m_ll), 
                             new CmdHopperShooting(m_shooter::isReady),
-                            new CmdShootDist())))
+                            new CmdShootDist(m_drive::calculateDistance))))
                         .whenReleased(new ParallelCommandGroup(
                             new InstantCommand(m_shooter::stopShoot, m_shooter),
                             new InstantCommand(() -> m_ll.turnShooterLEDOff())));
@@ -180,7 +193,9 @@ public class RobotContainer {
 
         m_rightStick.getButton(16).whenPressed(() -> m_intake.retractIntake());
 
-        m_rightStick.getPOVButton(0).whenPressed(() -> m_ll.turnShooterLEDOn());
+        m_rightStick.getPOVButton(0).whenPressed(new InstantCommand(m_ll::turnShooterLEDOn))
+                                                    .whenReleased(m_ll::turnShooterLEDOff);
+
         m_rightStick.getPOVButton(4).whenPressed(() -> m_ll.turnShooterLEDOff());
 
         //LEFT
@@ -197,9 +212,27 @@ public class RobotContainer {
 
         m_leftStick.getButton(3).whenPressed(() -> driveHalfSpeed = !driveHalfSpeed);
 
+        m_leftStick.getButton(4).whenPressed(new SequentialCommandGroup(
+                                            new InstantCommand(m_drive::resetPose),
+                                            new InstantCommand(() -> m_drive.resetPose(new Pose2d(8.255 - HUB_RADIUS,4.1,new Rotation2d())))
+                                            ));
+
         // m_leftStick.getButton(5).whenPressed(new CmdClimbEncoder(m_climber, -m_climber.getDesiredTicks(SMALL_VERTICAL_DISTANCE)));
 
         m_leftStick.getButton(5).whenPressed(() -> m_hood.zeroEncoder()); 
+
+        m_leftStick.getButton(6).whenPressed(new CmdInPlaceTurnOdom(m_drive, m_ll));
+
+        m_leftStick.getButton(7).whenPressed(
+                    new SequentialCommandGroup(
+                        new CmdRetractHopper().withTimeout(0.5), 
+                        new InstantCommand(() -> m_shooter.setState(ShooterState.UPPERHUB)),
+                        new ParallelCommandGroup(
+                            new CmdHopperShooting(m_shooter::isReady),
+                            new CmdShootDist(m_drive::calculateDistance))))
+                        .whenReleased(new ParallelCommandGroup(
+                            new InstantCommand(m_shooter::stopShoot, m_shooter))
+                            );
 
         m_leftStick.getButton(11).whenPressed(new InstantCommand(m_climber::bothManualExtend, m_climber))
                                 .whenReleased(new InstantCommand(m_climber::bothStop, m_climber));
@@ -283,6 +316,11 @@ public class RobotContainer {
         SmartDashboard.putNumber("Hood angle", m_hood.getMeasurement());
 
         SmartDashboard.putString("Intake state:", m_intake.getSolenoid());
+
+        SmartDashboard.putNumber("distance:", Units.metersToInches(m_drive.calculateDistance()));
+        SmartDashboard.putNumber("Heading:", m_drive.getHeading());
+        SmartDashboard.putNumber("OdometryX:", Units.metersToInches(m_drive.getPose().getX()));
+        SmartDashboard.putNumber("OdometryY:", Units.metersToInches(m_drive.getPose().getY()));
     }
 
     public void initPneumatics() {
